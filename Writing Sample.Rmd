@@ -1,0 +1,531 @@
+---
+title: "Is More Always Better?"
+author: "Wai Tak Tung"
+date: "4/6/2022"
+output: pdf_document
+ :keep_md = TRUE
+---
+
+## R environement setup
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+install.packages('MASS')
+install.packages('ggplot2')
+library(ggplot2)
+install.packages("stargazer")
+library(stargazer)
+install.packages("dplyr")
+library(dplyr)
+install.packages("dotwhisker")
+library(dotwhisker)
+install.packages("margins")
+library(margins)
+install.packages("viridis")
+library(viridis)
+```
+
+## Haas et al (2020) Diminishing marginal effect visualisation
+
+```{r}
+eq <- function(x){(-2/(x+2))+2}
+
+ggplot(data.frame(x=c(0,20)), aes(x=x)) + 
+  stat_function(fun=eq)+ xlab("Monetary Incentive")+ ylab("Participation in PMDC")+theme_bw()+ theme(axis.text.x=element_blank(),axis.text.y=element_blank(),axis.line = element_line(colour = "black"),plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank())+theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("Haas_graph.png",width = 8,height=5,units = "in")
+
+```
+
+## Data Preparation: Choosing Relevant Variables & Rename
+
+```{r data preparation}
+
+dta1 <- dplyr::select(incentive_exp,v_62,v_90,v_99, v_101,v_103,v_104,v_105,v_106,v_107, v_108,v_109,v_110)
+
+dta2 <- dplyr::rename(dta1,
+               SPP3=v_90,
+               WTP_60a=v_103,
+               WTP_60b=v_104,
+               WTP_70a=v_105,
+               WTP_70b=v_106,
+               WTP_90a=v_107,
+               WTP_90b=v_108,
+               WTP_100a=v_109,
+               WTP_100b=v_110
+               ) 
+```
+
+## Data preparation: Creating dummy variables for 1) Willingness to Particiapte (WTP) & 2) Privacy Concern 
+
+```{r data preparation}
+
+## Combining the self-learning and non-self learning experimental groups together & a binary variable for WTP. >=6: participate. <6: not participate
+
+dta2$WTP_60c <- coalesce(dta2$WTP_60a,dta2$WTP_60b,NA)
+
+dta2$WTP_70c <- coalesce(dta2$WTP_70a,dta2$WTP_70b, NA)
+
+dta2$WTP_90c <- coalesce(dta2$WTP_90a,dta2$WTP_90b, NA)
+
+dta2$WTP_100c <-coalesce(dta2$WTP_100a,dta2$WTP_100b, NA)
+
+dta2$WTP <-coalesce(dta2$WTP_60c,dta2$WTP_70c,dta2$WTP_90c,dta2$WTP_100c,NA)
+
+#Creating a MAX WTP Group (1: €60, 2: €70, 3: €90, 4:€100)
+
+dta2$WTP_GRP<- NA
+dta2$WTP_GRP[dta2$WTP_60c>=0]<-1
+dta2$WTP_GRP[dta2$WTP_70c>=0]<-2
+dta2$WTP_GRP[dta2$WTP_90c>=0]<-3
+dta2$WTP_GRP[dta2$WTP_100c>=0]<-4
+
+dta2$dummy_70 <- ifelse(dta2$WTP_GRP==2,1,0)
+dta2$dummy_90 <- ifelse(dta2$WTP_GRP==3,1,0)
+dta2$dummy_100 <- ifelse(dta2$WTP_GRP==4,1,0)
+ 
+## Creating a WTP dummy 
+dta2$WTP_dummy <- ifelse(dta2$WTP>=6,1,0)
+
+## Privacy variables 
+dta2$privacy_concern <- dta2$SPP3
+dta2$privacy_dummy<- ifelse(dta2$SPP3>3,1,0)
+
+## Choosing all the renamed varialbes and omited the incomplete cases
+
+dta3<- dplyr::select(dta2,dummy_70,dummy_90,dummy_100,WTP,WTP_GRP,WTP_dummy,privacy_concern,
+                     privacy_dummy) # n= 1214
+
+dta<-na.omit(dta3) 
+
+## Observing whether participants are randomly distributed across 4 incentive groups. 
+
+table(dta$WTP_GRP)
+```
+
+## H1: There exists an inverted U-shaped relationship between monetary incentive and willingness to participate in PMDC. 
+
+```{r}
+
+m1 <- glm(WTP_dummy~dummy_70+dummy_90+dummy_100,family = binomial(link = logit), data = dta)
+summary(m1)
+
+```
+
+## H1: AME graphs (Main analysis figure 6)
+
+```{r}
+
+dwplot(m1,margins = TRUE,
+       vline = geom_vline(
+           xintercept = 0,
+           colour = "grey60",
+           linetype = 2),dot_args = list(aes(shape = model)),whisker_args = list(aes(linetype = model)))%>%relabel_predictors(
+             c(dummy_70 = "€70 Incentive (ref group: €60)",
+               dummy_90 = " €90 Incentive (ref group: €60)",
+               dummy_100 = "€100 Incentive (ref group: €60)"
+               ))+
+    theme_bw(base_size = 12) + 
+    xlab("Average Marginal Effects") + ylab("") +
+    geom_vline(xintercept = 0,
+               colour = "grey60",
+               linetype = 2)+ ggtitle("Incentives on Willingness to Participate") + theme(plot.title = element_text(hjust = 0.5))+theme(
+        plot.title = element_text(face = "bold"))+theme(legend.position="none")
+
+## Output AME Table in figure 6
+ggsave("H1_logit.png",width = 9,height=6,units = "in")
+
+```
+
+## Hypothesis 2:  Invited sample members level of privacy concern about PMDC is positively correlated to the amount of monetary incentive they are offered.
+
+````{r data analysis}
+
+m2 <-  glm(privacy_dummy ~dummy_70+dummy_90+dummy_100,family = binomial(link = logit), data = dta)
+
+summary(m2)
+```
+
+## H2: Jitter Plots visualisation of distribution between Monetary Incentive and Privacy Concern (Main Analysis: 7 & 8)
+
+````{r data analysis}
+
+## What if invited sample members' privacy concern can be primed? Figure 7 in main analysis
+
+whatif_a <- data.frame(Treatment = c(rep(1,300)),
+                 b = c(rep(1,30),rep(2,120),rep(3,120),rep(4,30)))
+
+whatif_b <- data.frame(Treatment = c(rep(2,30)),
+                 b = c(rep(1,20),rep(2,60),rep(3,150),rep(4,70)))
+
+whatif_c <- data.frame(Treatment = c(rep(3,300)),
+                 b = c(rep(1,10),rep(2,30),rep(3,130),rep(4,130)))
+
+whatif_d <- data.frame(Treatment = c(rep(4,300)),
+                 b = c(rep(1,5),rep(2,15),rep(3,80),rep(4,200)))
+
+what_if <- rbind(whatif_a,whatif_b,whatif_c,whatif_d)
+
+png("jitter_hypothetical.png")
+par(mar = c(4, 7, 4, 2) + 0.1)
+plot(jitter(what_if$Treatment),
+     jitter(what_if$b),
+     pch = 19,
+     col = viridis(1, 0.2),
+     main = "If Incentives Can Prime Privacy Concern",
+     font.main = 1,
+     xlab = "Maximum Incentives (Euro)",
+     ylab = "",
+     xaxt = "n",
+     yaxt = "n",
+     bty = "n")
+axis(1,
+     at = 1:4,
+     labels = c("60",
+                "70",
+                "90",
+                "100"),
+     cex.axis = 0.7)
+axis(2,
+     at = 1:4,
+     labels = c("Not,\nConcerned at all",
+                "A little,\nconcerned",
+                "Somehwat,\nConcerned",
+                "Very,\nConcerned"),
+     las = 1,
+     cex.axis = 0.7)
+dev.off()
+
+## The actual distribution of invited sample members' privacy concern across the four maximum incentive group: figure 8 in main analysis
+
+png("jitter_actual.png")
+par(mar = c(5, 6, 4, 2) + 0.1)
+plot(jitter(dta$WTP_GRP),
+     jitter(as.numeric(dta$privacy_concern)),
+     pch = 19,
+     col = viridis(1, 0.2),
+     main = "Actual Correlation between Incentives and Privacy Concern",
+     font.main = 1,
+     xlab = "Maximum Incentives (Euro)",
+     ylab = "",
+     xaxt = "n",
+     yaxt = "n",
+     bty = "n")
+axis(1,
+     at = 1:4,
+     labels = c("60",
+                "70",
+                "90",
+                "100"),
+     cex.axis = 0.7)
+axis(2,
+     at = 1:4,
+     labels = c("Not,\nConcerned at all",
+                "A little,\nconcerned",
+                "Somehwat,\nConcerned",
+                "Very,\nConcerned"),
+     las = 1,
+     cex.axis = 0.7)
+dev.off
+
+`````
+
+## H2: AME graph (Main Analysis: Figure 9)
+
+```{r,echo=FALSE}
+
+## Average marginal effect graph for H2. Figure 10 in main analysis 
+
+dwplot(m2, margins = TRUE,
+       vline = geom_vline(
+           xintercept = 0,
+           colour = "grey60",
+           linetype = 2))%>% relabel_predictors(
+             c(dummy_70="€70 Incentive  (ref group: €60)",
+               dummy_90="€90 Incentive (ref group: €60) ",
+               dummy_100= "€100 Incentive (ref group €60)"))+
+    theme_bw(base_size = 12) + 
+    xlab("Average Marginal Effects") + ylab("") +
+    geom_vline(xintercept = 0,
+               colour = "grey60",
+               linetype = 2)+ ggtitle("Can Incentive Predict Privacy Concern?") + theme(plot.title = element_text(hjust = 0.5))+theme(legend.position="none")
+
+ggsave("H2_logit.png",width = 9,height=6,units = "in")
+
+```
+
+## H3: Invited sample members' level of privacy concern about PMDC is negatively correlated to their willingness to participate in a PMDC study.
+
+```{r}
+
+m3 <- glm(WTP_dummy~privacy_dummy,family = binomial(link = logit), data = dta)
+
+```
+
+## AME graph (Main Analysis figure 10)
+
+````{r}
+
+dwplot(m3, margins = TRUE,
+       vline = geom_vline(
+           xintercept = 0,
+           colour = "grey60",
+           linetype = 2))%>% relabel_predictors(
+             c(privacy_dummy="High Privacy Concern"))+
+    theme_bw(base_size = 12) + 
+    xlab("Average Marginal Effects") + ylab("") +
+    geom_vline(xintercept = 0,
+               colour = "grey60",
+               linetype = 2)+ ggtitle("Can Privacy Concern Predict Willingness to Participate?") + theme(plot.title = element_text(hjust = 0.5))+theme(legend.position="none")
+
+ggsave("H3_logit.png",width = 9,height=6,units = "in")
+
+```
+
+## H4:The relationship between monetary incentive and invited sample members' willingness to participate in PMDC is mediated by their level of privacy concern about PMDC. 
+
+```{r}
+## Model
+
+m4 <- glm(WTP_dummy~dummy_70+dummy_90+dummy_100+ privacy_dummy,family = binomial(link = logit), data = dta)
+
+```
+
+## H4: AME graph (Main anlysis figure 11)
+
+```{r visualisation}
+
+dwplot(m4, margins = TRUE,
+       vline = geom_vline(
+           xintercept = 0,
+           colour = "grey60",
+           linetype = 2),dot_args = list(aes(shape = model)),whisker_args = list(aes(linetype = model)))%>% relabel_predictors(
+             c(dummy_70="€70 Incentive  (ref group: €60)",
+               dummy_90="€90 Incentive (ref group: €60) ",
+               dummy_100= "€100 Incentive (ref group €60)",
+               privacy_dummy="High privacy concern"))+theme_bw(base_size = 12) + 
+    xlab("Average Marginal Effects") + ylab("") +
+    geom_vline(xintercept = 0,
+               colour = "grey60",
+               linetype = 2)+ ggtitle("Is Privacy Concern a Mediator?") + theme(plot.title = element_text(hjust = 0.5))+theme(legend.position="none")
+
+ggsave("H4_logit.png",width = 9,height=6,units = "in")
+
+```
+
+## Sub-Group Analysis I: Data Preparation 
+
+```{r}
+## Select Variables 
+SGA1 <- dplyr::select(incentive_exp,v_111,v_113, v_114)
+## Rename 
+SGA<-  dplyr::rename(SGA1,With_100 =v_111,
+                More=v_113,
+                Never = v_114)
+```
+
+## Sub Group Analysis I: How Much Extra Money is needed? 
+
+```{r}
+
+## Exclude those who are offered €100 originally AND those who are willing to participate.
+## Only Offered less  than €100 and unwilling to participate is left
+Below100_XWTP <- SGA[complete.cases(SGA[,1]),]
+
+Below100_XWTP$correct <- ifelse(Below100_XWTP$More>0 & Below100_XWTP$Never==1,888)
+Below100_XWTP$correct[is.na(Below100_XWTP$correct)] <- 0
+
+SGA_I <- subset(Below100_XWTP, correct<888)
+ 
+## How many people are willing to participate with just €100 and €100 is not enough
+SGA_I$extra[SGA_I$With_100==1]<- "Yes to €100"
+SGA_I$extra[SGA_I$With_100==2]<- "No to €100"
+
+table(SGA_I$extra)
+
+SGA_I$NEW <- coalesce(SGA_I$More,SGA_I$Never,NA)
+
+## Create a new variable that label the responses 
+
+SGA_I$NEW2[SGA_I$NEW==1]<- "Will not participate with more money"
+SGA_I$NEW2[SGA_I$NEW>1]<- "Will participate with more money"
+
+## Excluding non-responses for this question -> (N=220)
+SGAI_a<- SGA_I[complete.cases(SGA_I[,6]),]
+
+table(SGAI_a$NEW2)
+
+## Only selecting those who want incentive more than €100.  (N=82)
+
+More_Never<- subset(SGA_I, More >100)
+
+More_Never$NEW <- coalesce(More_Never$More,More_Never$Never,NA)
+
+More_Never$NEW2[More_Never$NEW==1]<- "Will not participate with more money"
+More_Never$NEW2[More_Never$NEW>1]<- "Will participate with more money"
+
+median(More_Never$More)
+
+```
+
+## Visualising the median (Appendix figure 8)
+
+```{r}
+ggplot(More_Never, aes(x=NEW))+geom_histogram(binwidth = 25)+ scale_x_continuous(breaks = scales::pretty_breaks(n = 10))+ geom_density(alpha=.2, fill="#FF6666") +geom_vline(aes(xintercept=median(NEW),color="median"), linetype="dashed")+labs(title="",x="Incentive (€)",y = "Frequency")+theme(plot.title = element_text(hjust = 0.5))+  scale_color_manual(name = "Statistics", values = c(median = "blue"))
+
+ggsave("How_much_more.png",width = 9,height=6,units = "in")
+
+```
+
+## Sub Group Analysis II: Will invites sample members still participate with less money than offered? If so, is it because of non-monetary reasons? (Appendix figure 9).
+
+```{r}
+
+## THose offered more than 60 and willing to participate 
+
+SGA2a <- dplyr::select(incentive_exp,v_112)
+
+SGA2b<-  dplyr::rename(SGA2a,With_60 =v_112)
+
+SGA2 <- na.omit(SGA2b)
+
+SGA2$Answers <- ifelse(SGA2$With_60==2,0,1)
+
+SGA2$Answers[SGA2$Answers==1]<- 'Ok with €60'
+SGA2$Answers[SGA2$Answers==0]<- 'Not Okay with €60'
+
+ggplot(SGA2, aes(x=Answers)) + geom_histogram(binwidth = 1,stat = "count")+  labs(title="Will you participate if offered only €60? (n= 503)",x="",y = "Frequency")+theme(plot.title = element_text(hjust = 0.5))+ geom_bar(aes(fill = Answers))+ geom_text(stat='count', aes(label=..count..), vjust=1)+scale_fill_discrete(name="")+  theme(axis.text.y=element_blank(),
+        axis.ticks.y=element_blank() 
+        )+theme(legend.position="bottom")
+
+ggsave("Okay_with_60.png",width = 9,height=6,units = "in")
+```
+
+## Appendix: Summary Table (Appendix table 1)
+
+```{r}
+## Provide the summary statistic table shown in appendix table 1
+
+stargazer(as.data.frame(dta))
+
+```
+
+## Appendix: Distribution of Willingness to participate (Appendix Figure 2-6)
+
+```{r}
+## Aggregate WTP 
+
+ggplot(dta, aes(x=WTP)) + geom_histogram(binwidth = 0.5)+  labs(title="Willingness to Participate (N=1205)",x="Willingness to Participate", y = "Count")+scale_x_continuous(breaks = seq(0, 10, by = 1))+theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("WTP_AGG.png",width = 9,height=6,units = "in")
+
+## 60 Incentives 
+
+WTP_60_h <- subset(dta, WTP_GRP==1)
+
+ggplot(WTP_60_h, aes(x=WTP)) + geom_histogram(binwidth = 0.5)+  labs(title="Willingness to Participate €60 Group (N= 296)",x="Willingness to Participate", y = "Count")+scale_x_continuous(breaks = seq(0, 10, by = 1))+theme(plot.title = element_text(hjust = 0.5))
+
+ggsave("WTP_60.png",width = 9,height=6,units = "in")
+
+WTP_70_h <- subset(dta, WTP_GRP==2)
+
+ggplot(WTP_70_h, aes(x=WTP)) + geom_histogram(binwidth = 0.5)+  labs(title="Willingness to Participate €70 Group (N= 301)",x="Willingness to Participate", y = "Count")+theme(plot.title = element_text(hjust = 0.5))+ scale_x_continuous(breaks = scales::pretty_breaks(n = 10))
+
+ggsave("WTP_70.png",width = 9,height=6,units = "in")
+
+WTP_90_h <- subset(dta, WTP_GRP==3)
+
+ggplot(WTP_90_h, aes(x=WTP)) + geom_histogram(binwidth = 0.5)+  labs(title="Willingness to Participate €90 Incentive Group  (N= 301)",x="Willingness to Participate", y = "Count")+theme(plot.title = element_text(hjust = 0.5))+ scale_x_continuous(breaks = scales::pretty_breaks(n = 10))
+
+ggsave("WTP_90.png",width = 9,height=6,units = "in")
+
+WTP_100_h <- subset(dta, WTP_GRP==4)
+
+ggplot(WTP_100_h, aes(x=WTP)) + geom_histogram(binwidth = 0.5)+  labs(title="Willingness to Participate €100 Incentive Group (N= 307)",x="Willingness to Participate", y = "Count")+theme(plot.title = element_text(hjust = 0.5))+ scale_x_continuous(breaks = scales::pretty_breaks(n = 10))
+
+ggsave("WTP_100.png",width = 9,height=6,units = "in")
+
+```
+
+## Appendix: Different opeerationalizations of Willingness to Participate and Average Margianl Effects Tables (Table 2-10)
+
+```{r Appendix Stuff}
+
+dta_appendix <- dplyr::select(dta,dummy_70,dummy_90,dummy_100,WTP,WTP_GRP,privacy_concern,privacy_dummy)
+
+## WTP_dummy with different cutpoint: Dummy 2: 0-4: unwilling, 5-10 willing, Dummy 3: only use extreme points (0:unwilling, 1: willing)  
+
+dta_appendix$WTP_Dummy <-ifelse(dta_appendix$WTP>=6,1,0)
+dta_appendix$WTP_Dummy2 <-ifelse(dta_appendix$WTP>=5,1,0)
+dta_appendix$WTP_Dummy3 <- NA 
+dta_appendix$WTP_Dummy3[dta_appendix$WTP==10]<-1
+dta_appendix$WTP_Dummy3[dta_appendix$WTP==0]<-0
+
+## The logistic regressions for hypothesis 1 and hypothesis 3 and 4 with different cutoff 
+m1_APP<- glm(WTP_Dummy2~dummy_70+dummy_90+dummy_100,family = binomial(link = logit), data = dta_appendix)
+
+m3_APP<- glm(WTP_Dummy2~privacy_dummy,family = binomial(link = logit), data = dta_appendix)
+
+m4_APP <- glm(WTP_Dummy2~dummy_70+dummy_90+dummy_100+privacy_dummy,family = binomial(link = logit), data = dta_appendix)
+
+## The logistic regressions for H1, H3 and H4 with just extreme points
+
+m1_APP2<- glm(WTP_Dummy3~dummy_70+dummy_90+dummy_100,family = binomial(link = logit), data = dta_appendix)
+
+m3_APP2 <- glm(WTP_Dummy3~ privacy_dummy,family = binomial(link = logit), data = dta_appendix)
+
+m4_APP2<- glm(WTP_Dummy3~dummy_70+dummy_90+dummy_100+ privacy_dummy,family = binomial(link = logit), data = dta_appendix)
+
+## Using the 4-scale privacy concern variable for H3 and H4
+
+m3_APP3 <- glm(WTP_Dummy~privacy_concern,family = binomial(link = logit), data = dta_appendix)
+
+m4_APP3 <- glm(WTP_Dummy~dummy_70+dummy_90+dummy_100+privacy_concern,family = binomial(link = logit), data = dta_appendix)
+
+# Logistic Regression Table for H1 . Appendix table 2
+
+stargazer(m1,m1_APP,m1_APP2)
+
+## Average Marginal effect table for H1: Appendix table 3 
+
+AME_table <- margins::margins_summary(m1)
+
+stargazer(as.data.frame(AME_table),summary = FALSE)
+
+# Logistic Regression Table for H2. Appendix table 4
+
+stargazer(m2)
+
+## Average Marginal Effects table for H2. Appendix table 5. 
+AME_table2 <- margins::margins_summary(m2)
+
+stargazer(as.data.frame(AME_table2),summary = FALSE)
+
+##Losgistic Regression for H3 and H4. Appendix table 6.
+
+stargazer(m3,m3_APP3,m4,m4_APP3)
+
+##Losgistic Regression for H3. Appendix table 7
+
+stargazer(m3,m3_APP,m3_APP2)
+
+## Average Marginal Effects table for H3. Appendix Table 8
+
+AME_table3 <- margins::margins_summary(m3)
+AME_table3
+stargazer(as.data.frame(AME_table3),summary = FALSE)
+
+##Losgistic Regression for H4. Appendix table 9
+
+stargazer(m4,m4_APP,m4_APP2)
+
+##Average Marginal Effects table for H4. Appendix table 10
+
+AME_table4 <- margins::margins_summary(m4)
+
+stargazer(as.data.frame(AME_table4),summary = FALSE)
+
+```
